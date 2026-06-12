@@ -1,10 +1,10 @@
 #![allow(clippy::only_used_in_recursion)]
-use crate::Symbol;
 use crate::no_std_prelude::*;
 use crate::{
     Analysis, EClass, ENodeOrVar, FromOp, HashMap, HashSet, Id, Language, PatternAst, RecExpr,
     Rewrite, UnionFind, Var, util::pretty_print,
 };
+use crate::{EGraph, Symbol};
 use core::cmp::Ordering;
 use core::fmt::{self, Debug, Display, Formatter};
 use core::ops::{Deref, DerefMut};
@@ -884,6 +884,30 @@ impl<I: Eq + PartialEq> PartialOrd for HeapState<I> {
     }
 }
 
+fn id_to_expr<L: Language>(nodes: &[L], id: Id) -> RecExpr<L> {
+    let mut res = Default::default();
+    let mut cache = Default::default();
+    id_to_expr_internal(nodes, &mut res, id, &mut cache);
+    res
+}
+
+fn id_to_expr_internal<L: Language>(
+    nodes: &[L],
+    res: &mut RecExpr<L>,
+    node_id: Id,
+    cache: &mut HashMap<Id, Id>,
+) -> Id {
+    if let Some(existing) = cache.get(&node_id) {
+        return *existing;
+    }
+    let new_node = nodes[node_id.0 as usize]
+        .clone()
+        .map_children(|child| id_to_expr_internal(nodes, res, child, cache));
+    let res_id = res.add(new_node);
+    cache.insert(node_id, res_id);
+    res_id
+}
+
 impl<L: Language> Explain<L> {
     fn make_rule_table<'a, N: Analysis<L>>(
         rules: &[&'a Rewrite<L, N>],
@@ -970,7 +994,48 @@ impl<L: Language> Explain<L> {
             .insert((node2, node1), (BigUint::one(), node1));
     }
 
-    pub(crate) fn union(&mut self, node1: Id, node2: Id, justification: Justification) {
+    pub(crate) fn union(
+        &mut self,
+        egraph_nodes: &[L],
+        node1: Id,
+        node2: Id,
+        justification: Justification,
+        debug: bool,
+    ) where
+        L: Display,
+    {
+        if debug {
+            let expr1 = id_to_expr(egraph_nodes, node1);
+            let expr2 = id_to_expr(egraph_nodes, node2);
+            println!("Recording union for: {}\n{}", expr1, expr2);
+
+            let expl_node1 = &self.explainfind[usize::from(node1)];
+            println!("-------\nExpr1: {expr1}");
+            println!("Parent: {}", id_to_expr(egraph_nodes, expl_node1.parent_connection.next));
+            for conn in &expl_node1.neighbors {
+                let curr = id_to_expr(egraph_nodes, conn.current);
+                let next = id_to_expr(egraph_nodes, conn.next);
+                if conn.is_rewrite_forward {
+                    println!("{curr} -{:?}-> {next}", conn.justification);
+                } else {
+                    println!("{curr} <-{:?}- {next}", conn.justification);
+                }
+            }
+
+            let expl_node2 = &self.explainfind[usize::from(node2)];
+            println!("-------\nExpr2: {expr2}");
+            println!("Parent: {}", id_to_expr(egraph_nodes, expl_node2.parent_connection.next));
+            for conn in &expl_node2.neighbors {
+                let curr = id_to_expr(egraph_nodes, conn.current);
+                let next = id_to_expr(egraph_nodes, conn.next);
+                if conn.is_rewrite_forward {
+                    println!("{curr} -{:?}-> {next}", conn.justification);
+                } else {
+                    println!("{curr} <-{:?}- {next}", conn.justification);
+                }
+            }
+        }
+
         if let Justification::Congruence = justification {
             // assert!(self.node(node1).matches(self.node(node2)));
         }
@@ -1045,6 +1110,34 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
     pub(crate) fn node(&self, node_id: Id) -> &L {
         &self.nodes[usize::from(node_id)]
     }
+
+    /*
+    pub fn id_to_expr(&self, id: Id) -> RecExpr<L> {
+        let mut res = Default::default();
+        let mut cache = Default::default();
+        self.id_to_expr_internal(&mut res, id, &mut cache);
+        res
+    }
+
+    fn id_to_expr_internal(
+        &self,
+        res: &mut RecExpr<L>,
+        node_id: Id,
+        cache: &mut HashMap<Id, Id>,
+    ) -> Id {
+        if let Some(existing) = cache.get(&node_id) {
+            return *existing;
+        }
+        let new_node = self
+            .id_to_node(node_id)
+            .clone()
+            .map_children(|child| self.id_to_expr_internal(res, child, cache));
+        let res_id = res.add(new_node);
+        cache.insert(node_id, res_id);
+        res_id
+    }
+    */
+
     fn node_to_explanation(
         &self,
         node_id: Id,

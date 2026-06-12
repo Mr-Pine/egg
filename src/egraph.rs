@@ -93,7 +93,7 @@ fn default_classes_by_op<K>() -> HashMap<K, HashSet<Id>> {
     HashMap::default()
 }
 
-impl<L: Language, N: Analysis<L> + Default> Default for EGraph<L, N> {
+impl<L: Language + Display, N: Analysis<L> + Default> Default for EGraph<L, N> {
     fn default() -> Self {
         Self::new(N::default())
     }
@@ -109,7 +109,7 @@ impl<L: Language, N: Analysis<L>> Debug for EGraph<L, N> {
     }
 }
 
-impl<L: Language, N: Analysis<L>> EGraph<L, N> {
+impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
     /// Creates a new, empty `EGraph` with the given `Analysis`
     pub fn new(analysis: N) -> Self {
         Self {
@@ -254,6 +254,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
                 &other.id_to_pattern(right, &Default::default()).0.ast,
                 &Default::default(),
                 why,
+                false
             );
         }
         self.rebuild();
@@ -794,7 +795,7 @@ where
 }
 
 /// Given an `Id` using the `egraph[id]` syntax, retrieve the e-class.
-impl<L: Language, N: Analysis<L>> core::ops::Index<Id> for EGraph<L, N> {
+impl<L: Language + Display, N: Analysis<L>> core::ops::Index<Id> for EGraph<L, N> {
     type Output = EClass<L, N::Data>;
     fn index(&self, id: Id) -> &Self::Output {
         let id = self.find(id);
@@ -815,7 +816,7 @@ impl<L: Language, N: Analysis<L>> core::ops::IndexMut<Id> for EGraph<L, N> {
     }
 }
 
-impl<L: Language, N: Analysis<L>> EGraph<L, N> {
+impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
     /// Adds a [`RecExpr`] to the [`EGraph`], returning the id of the RecExpr's eclass.
     ///
     /// # Example
@@ -1025,7 +1026,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
                     debug_assert_eq!(Id::from(self.nodes.len()), new_id);
                     self.nodes.push(original);
                     self.unionfind.union(id, new_id);
-                    explain.union(existing_id, new_id, Justification::Congruence);
+                    explain.union(&self.nodes, existing_id, new_id, Justification::Congruence, false);
                     new_id
                 }
             } else {
@@ -1112,11 +1113,12 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
         to_pat: &PatternAst<L>,
         subst: &Subst,
         rule_name: impl Into<Symbol>,
+        debug: bool
     ) -> (Id, bool) {
         let id1 = self.add_instantiation_noncanonical(from_pat, subst);
         let id2 = self.add_instantiation_noncanonical(to_pat, subst);
 
-        let did_union = self.perform_union(id1, id2, Some(Justification::Rule(rule_name.into())));
+        let did_union = self.perform_union(id1, id2, Some(Justification::Rule(rule_name.into())), debug);
         (self.find(id1), did_union)
     }
 
@@ -1126,7 +1128,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
     /// `Id`s returned by functions like [`add_uncanonical`](EGraph::add_uncanonical) is important
     /// to control explanations
     pub fn union_trusted(&mut self, from: Id, to: Id, reason: impl Into<Symbol>) -> bool {
-        self.perform_union(from, to, Some(Justification::Rule(reason.into())))
+        self.perform_union(from, to, Some(Justification::Rule(reason.into())), false)
     }
 
     /// Unions two eclasses given their ids.
@@ -1149,11 +1151,11 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
             let caller = core::panic::Location::caller();
             self.union_trusted(id1, id2, caller.to_string())
         } else {
-            self.perform_union(id1, id2, None)
+            self.perform_union(id1, id2, None, false)
         }
     }
 
-    fn perform_union(&mut self, enode_id1: Id, enode_id2: Id, rule: Option<Justification>) -> bool {
+    fn perform_union(&mut self, enode_id1: Id, enode_id2: Id, rule: Option<Justification>, debug: bool) -> bool {
         N::pre_union(self, enode_id1, enode_id2, &rule);
 
         self.clean = false;
@@ -1175,7 +1177,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
         }
 
         if let Some(explain) = &mut self.explain {
-            explain.union(enode_id1, enode_id2, rule.unwrap());
+            explain.union(&self.nodes, enode_id1, enode_id2, rule.unwrap(), debug);
         }
 
         // make id1 the new root
@@ -1352,7 +1354,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
                 node.update_children(|id| self.find_mut(id));
                 if let Some(memo_class) = self.memo.insert(node, class) {
                     let did_something =
-                        self.perform_union(memo_class, class, Some(Justification::Congruence));
+                        self.perform_union(memo_class, class, Some(Justification::Congruence), false);
                     n_unions += did_something as usize;
                 }
             }
