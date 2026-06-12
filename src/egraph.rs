@@ -1026,7 +1026,7 @@ impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
                     debug_assert_eq!(Id::from(self.nodes.len()), new_id);
                     self.nodes.push(original);
                     self.unionfind.union(id, new_id);
-                    explain.union(&self.nodes, existing_id, new_id, Justification::Congruence, false);
+                    explain.union(&self.nodes, existing_id, new_id, Justification::Congruence);
                     new_id
                 }
             } else {
@@ -1118,7 +1118,7 @@ impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
         let id1 = self.add_instantiation_noncanonical(from_pat, subst);
         let id2 = self.add_instantiation_noncanonical(to_pat, subst);
 
-        let did_union = self.perform_union(id1, id2, Some(Justification::Rule(rule_name.into())), debug);
+        let did_union = self.perform_union(id1, id2, Some(Justification::Rule(rule_name.into())));
         (self.find(id1), did_union)
     }
 
@@ -1128,7 +1128,7 @@ impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
     /// `Id`s returned by functions like [`add_uncanonical`](EGraph::add_uncanonical) is important
     /// to control explanations
     pub fn union_trusted(&mut self, from: Id, to: Id, reason: impl Into<Symbol>) -> bool {
-        self.perform_union(from, to, Some(Justification::Rule(reason.into())), false)
+        self.perform_union(from, to, Some(Justification::Rule(reason.into())))
     }
 
     /// Unions two eclasses given their ids.
@@ -1151,11 +1151,11 @@ impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
             let caller = core::panic::Location::caller();
             self.union_trusted(id1, id2, caller.to_string())
         } else {
-            self.perform_union(id1, id2, None, false)
+            self.perform_union(id1, id2, None)
         }
     }
 
-    fn perform_union(&mut self, enode_id1: Id, enode_id2: Id, rule: Option<Justification>, debug: bool) -> bool {
+    fn perform_union(&mut self, enode_id1: Id, enode_id2: Id, rule: Option<Justification>) -> bool {
         N::pre_union(self, enode_id1, enode_id2, &rule);
 
         self.clean = false;
@@ -1177,7 +1177,7 @@ impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
         }
 
         if let Some(explain) = &mut self.explain {
-            explain.union(&self.nodes, enode_id1, enode_id2, rule.unwrap(), debug);
+            explain.union(&self.nodes, enode_id1, enode_id2, rule.unwrap());
         }
 
         // make id1 the new root
@@ -1354,7 +1354,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
                 node.update_children(|id| self.find_mut(id));
                 if let Some(memo_class) = self.memo.insert(node, class) {
                     let did_something =
-                        self.perform_union(memo_class, class, Some(Justification::Congruence), false);
+                        self.perform_union(memo_class, class, Some(Justification::Congruence));
                     n_unions += did_something as usize;
                 }
             }
