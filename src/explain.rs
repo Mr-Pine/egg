@@ -1011,7 +1011,10 @@ impl<L: Language> Explain<L> {
 
             let expl_node1 = &self.explainfind[usize::from(node1)];
             println!("-------\nExpr1: {expr1}");
-            println!("Parent: {}", id_to_expr(egraph_nodes, expl_node1.parent_connection.next));
+            println!(
+                "Parent: {}",
+                id_to_expr(egraph_nodes, expl_node1.parent_connection.next)
+            );
             for conn in &expl_node1.neighbors {
                 let curr = id_to_expr(egraph_nodes, conn.current);
                 let next = id_to_expr(egraph_nodes, conn.next);
@@ -1024,7 +1027,10 @@ impl<L: Language> Explain<L> {
 
             let expl_node2 = &self.explainfind[usize::from(node2)];
             println!("-------\nExpr2: {expr2}");
-            println!("Parent: {}", id_to_expr(egraph_nodes, expl_node2.parent_connection.next));
+            println!(
+                "Parent: {}",
+                id_to_expr(egraph_nodes, expl_node2.parent_connection.next)
+            );
             for conn in &expl_node2.neighbors {
                 let curr = id_to_expr(egraph_nodes, conn.current);
                 let next = id_to_expr(egraph_nodes, conn.next);
@@ -1201,6 +1207,9 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
         if self.optimize_explanation_lengths {
             self.calculate_shortest_explanations::<N>(left, right, classes, unionfind);
         }
+        let left_expr = id_to_expr(&self.nodes, left);
+        let right_expr = id_to_expr(&self.nodes, right);
+        println!("Found shortest expl from {left_expr} ({left}) to {right_expr} ({right})");
 
         let mut cache = Default::default();
         let mut enode_cache = Default::default();
@@ -1760,6 +1769,23 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
             let (left_connections, right_connections) = self
                 .shortest_path_modulo_congruence(start, end, congruence_neighbors, distance_memo)
                 .unwrap();
+
+            let start_expr = id_to_expr(&self.nodes, start);
+            let end_expr = id_to_expr(&self.nodes, end);
+            println!(
+                "Shortest path mod congr from {start_expr} to {end_expr}:\n{:?}, {:?}",
+                left_connections, right_connections
+            );
+            for used_id in left_connections
+                .iter()
+                .chain(right_connections.iter())
+                .flat_map(|c| [c.current, c.next])
+                .filter(|id| *id != start && *id != end)
+                .collect::<HashSet<_>>()
+            {
+                let expr = id_to_expr(&self.nodes, used_id);
+                println!("{used_id}: {expr}");
+            }
 
             //assert!(Explanation::new(self.explain_enodes(start, end, &mut Default::default())).make_flat_explanation().len()-1 <= total_cost);
 
