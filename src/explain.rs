@@ -1172,7 +1172,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
 
         let mut cache = Default::default();
         let mut enode_cache = Default::default();
-        Explanation::new(self.explain_enodes(left, right, &mut cache, &mut enode_cache, false))
+        Explanation::new(self.explain_enodes(left, right, unionfind, &mut cache, &mut enode_cache, false))
     }
 
     fn common_ancestor(&self, mut left: Id, mut right: Id) -> Id {
@@ -1218,6 +1218,60 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
         }
     }
 
+    fn get_path_unoptimized_mod_congruence(&self, union_find: &UnionFind, left: Id, right: Id) -> (Vec<Connection>, Vec<Connection>) {
+        let (left_ancestor, right_ancestor) = {
+            let mut current_left = left;
+            let mut current_right = right;
+            let mut canon_seen_left: HashSet<Id> = Default::default();
+            let mut canon_seen_right: HashSet<Id> = Default::default();
+
+            let mut first_canon_witness_left: HashMap<Id, Id> = Default::default();
+            let mut first_canon_witness_right: HashMap<Id, Id> = Default::default();
+
+            loop {
+                let left_canon = union_find.find(current_left);
+                let right_canon = union_find.find(current_right);
+
+                if canon_seen_left.insert(left_canon) {
+                    first_canon_witness_left.insert(left_canon, current_left);
+                }
+                if canon_seen_right.contains(&left_canon) {
+                    let left_witness = first_canon_witness_left[&left_canon];
+                    let right_witness = first_canon_witness_right[&left_canon];
+                    break (left_witness, right_witness);
+                }
+
+                if canon_seen_right.insert(right_canon) {
+                    first_canon_witness_right.insert(right_canon, current_right);
+                }
+                if canon_seen_left.contains(&right_canon) {
+                    let left_witness = first_canon_witness_left[&right_canon];
+                    let right_witness = first_canon_witness_right[&right_canon];
+                    break (left_witness, right_witness);
+                }
+
+                let next_left = self.explainfind[usize::from(current_left)].parent_connection.next;
+                let next_right = self.explainfind[usize::from(current_right)].parent_connection.next;
+
+                assert!(next_left != left || next_right != right);
+                current_left = next_left;
+                current_right = next_right;
+            }
+        };
+
+        let mut left_connections = self.get_connections(left, left_ancestor);
+        let congruence_edge = Connection {
+            current: left_ancestor,
+            next: right_ancestor,
+            justification: Justification::Congruence,
+            is_rewrite_forward: true,
+        };
+        left_connections.push(congruence_edge);
+
+        let right_connections = self.get_connections(right, right_ancestor);
+        (left_connections, right_connections)
+    }
+
     fn get_path_unoptimized(&self, left: Id, right: Id) -> (Vec<Connection>, Vec<Connection>) {
         let ancestor = self.common_ancestor(left, right);
         let left_connections = self.get_connections(left, ancestor);
@@ -1241,7 +1295,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
         }
     }
 
-    fn get_path(&self, mut left: Id, right: Id) -> (Vec<Connection>, Vec<Connection>) {
+    fn get_path(&self, union_find: &UnionFind, mut left: Id, right: Id) -> (Vec<Connection>, Vec<Connection>) {
         let mut left_connections = vec![];
         loop {
             if left == right {
@@ -1255,7 +1309,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
             }
         }
 
-        let (restleft, right_connections) = self.get_path_unoptimized(left, right);
+        let (restleft, right_connections) = self.get_path_unoptimized_mod_congruence(union_find, left, right);
         left_connections.extend(restleft);
         (left_connections, right_connections)
     }
@@ -1264,6 +1318,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
         &self,
         left: Id,
         right: Id,
+        union_find: &UnionFind,
         cache: &mut ExplainCache<L>,
         node_explanation_cache: &mut NodeExplanationCache<L>,
         use_unoptimized: bool,
@@ -1272,7 +1327,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
         let (left_connections, right_connections) = if use_unoptimized {
             self.get_path_unoptimized(left, right)
         } else {
-            self.get_path(left, right)
+            self.get_path(union_find, left, right)
         };
 
         for (i, connection) in left_connections
@@ -1288,6 +1343,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
 
             proof.push(self.explain_adjacent(
                 connection,
+                union_find,
                 cache,
                 node_explanation_cache,
                 use_unoptimized,
@@ -1299,6 +1355,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
     fn explain_adjacent(
         &self,
         connection: Connection,
+        union_find: &UnionFind,
         cache: &mut ExplainCache<L>,
         node_explanation_cache: &mut NodeExplanationCache<L>,
         use_unoptimized: bool,
@@ -1339,6 +1396,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
                     subproofs.push(self.explain_enodes(
                         *left_child,
                         *right_child,
+                        union_find,
                         cache,
                         node_explanation_cache,
                         use_unoptimized,
