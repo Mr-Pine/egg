@@ -1436,12 +1436,14 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
             .insert((current, right), (distance, next));
     }
 
+    /// Writes the distances along this path into [Self::shortest_explanation_memo]
+    /// and returns the total distance along the path
     fn populate_path_length(
         &mut self,
         right: Id,
         left_connections: &[Connection],
         distance_memo: &mut DistanceMemo,
-    ) {
+    ) -> ProofCost {
         self.shortest_explanation_memo
             .insert((right, right), (BigUint::zero(), right));
         for connection in left_connections.iter().rev() {
@@ -1456,14 +1458,30 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
             let dist = self.connection_distance(connection, distance_memo);
             self.replace_distance(current, next, right, next_cost + dist);
         }
+
+        let Some(&Connection { current: left, .. }) = left_connections.first() else {
+            return BigUint::zero();
+        };
+        self.shortest_explanation_memo
+            .get(&(left, right))
+            .unwrap()
+            .0
+            .clone()
     }
 
+    /// Note that this is (at least sometimes) a very bad estimate,
+    /// even if the function name sounds very confident ._.
     fn distance_between(
         &mut self,
         left: Id,
         right: Id,
         distance_memo: &mut DistanceMemo,
     ) -> ProofCost {
+        println!(
+            "Calculating distance between {} ({left}) and {} ({right})",
+            id_to_expr(&self.nodes, left),
+            id_to_expr(&self.nodes, right),
+        );
         if left == right {
             return BigUint::zero();
         }
@@ -1473,6 +1491,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
             // fall back on calculating ancestor for top-level query (not from congruence)
             self.common_ancestor(left, right)
         };
+        println!("Ancestor is {}", id_to_expr(&self.nodes, ancestor));
         // calculate edges until you are past the ancestor
         self.calculate_parent_distance(left, ancestor, distance_memo);
         self.calculate_parent_distance(right, ancestor, distance_memo);
@@ -1708,26 +1727,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
             }
         }
 
-        let total_cost = path_cost.get(&end);
-
-        let left_connections;
-        let mut right_connections = vec![];
-
-        // we would like to assert that we found a path better than the normal one
-        // but since proof sizes are saturated this is not true
-        /*let dist = self.distance_between(start, end, distance_memo);
-        if *total_cost.unwrap() > dist {
-            panic!(
-                "Found cost greater than baseline {} vs {}",
-                total_cost.unwrap(),
-                dist
-            );
-        }*/
-        if *total_cost.unwrap() >= self.distance_between(start, end, distance_memo) {
-            let (a_left_connections, a_right_connections) = self.get_path_unoptimized(start, end);
-            left_connections = a_left_connections;
-            right_connections = a_right_connections;
-        } else {
+        let (left_connections, cost) = {
             let mut current = end;
             let mut connections = vec![];
             while current != start {
@@ -1740,11 +1740,54 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
                 }
             }
             connections.reverse();
-            self.populate_path_length(end, &connections, distance_memo);
-            left_connections = connections;
-        }
+            connections = Self::collapse_transitive_congruent_edges(&connections);
+            let total_cost = self.populate_path_length(end, &connections, distance_memo);
+            (connections, total_cost)
+        };
 
-        Some((left_connections, right_connections))
+        /// naive_distance and cost both depend on [Self::distance_between], which sometimes massively overestimates the distance
+        /// making its result basically unusable for this check. It might also be the case that it destroys the above path selection.
+        /// We try to repair that through [Self::collapse_transitive_congruent_edges].
+        //let naive_distance = self.distance_between(start, end, distance_memo);
+        let connections = if /*cost >= naive_distance*/ false {
+            let connections = self.get_path_unoptimized(start, end);
+            connections
+        } else {
+            (left_connections, vec![])
+        };
+
+        Some(connections)
+    }
+
+    fn collapse_transitive_congruent_edges(connections: &[Connection]) -> Vec<Connection> {
+        if connections.is_empty() {
+            return vec![];
+        }
+        let mut collapsed = vec![];
+        let mut current_connection = connections[0].clone();
+        for connection in &connections[1..] {
+            if !matches!(
+                (&current_connection.justification, &connection.justification),
+                (&Justification::Congruence, &Justification::Congruence)
+            ) {
+                collapsed.push(current_connection.clone());
+                current_connection = connection.clone()
+            } else {
+                assert_eq!(
+                    current_connection.is_rewrite_forward,
+                    connection.is_rewrite_forward
+                );
+                assert_eq!(current_connection.next, connection.current);
+                current_connection.next = connection.next;
+            }
+        }
+        collapsed.push(current_connection);
+
+        println!(
+            "Collapsed {} edges\nFrom {connections:?} to {collapsed:?}",
+            connections.len() - collapsed.len()
+        );
+        collapsed
     }
 
     fn greedy_short_explanations(
