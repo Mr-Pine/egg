@@ -1,4 +1,4 @@
-# <img src="doc/egg.svg" alt="egg logo" height="40" align="left"> egg: egraphs good
+# <img src="doc/egg.svg" alt="egg logo" height="40" align="left"> egg: egraphs good (but this library debatable)
 
 [![Crates.io](https://img.shields.io/crates/v/egg.svg)](https://crates.io/crates/egg)
 [![Released Docs.rs](https://img.shields.io/crates/v/egg?color=blue&label=docs)](https://docs.rs/egg/)
