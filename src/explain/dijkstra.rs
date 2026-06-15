@@ -3,8 +3,8 @@ use crate::explain::{Connection, ExplainCache, ExplainNodes, NodeExplanationCach
 use crate::unionfind::UnionFind;
 use crate::util::{HashMap, HashSet};
 use crate::{
-    Analysis, EClass, EGraph, Explanation, Id, IterationData, Justification, Language, RecExpr,
-    Runner, TreeExplanation, TreeTerm,
+    Analysis, EGraph, Explanation, Id, IterationData, Language, PatternAst, RecExpr, Runner, Subst,
+    TreeExplanation, TreeTerm,
 };
 use alloc::rc::Rc;
 use core::fmt::Display;
@@ -37,6 +37,33 @@ impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
         self.explain_id_equivalence_dijkstra(left, right)
     }
 
+    /// Get an explanation for why an expression matches a pattern.
+    pub fn explain_matches_dijkstra(
+        &mut self,
+        left_expr: &RecExpr<L>,
+        right_pattern: &PatternAst<L>,
+        subst: &Subst,
+    ) -> Explanation<L> {
+        let left = self.add_expr_uncanonical(left_expr);
+        let right = self.add_instantiation_noncanonical(right_pattern, subst);
+
+        if self.find(left) != self.find(right) {
+            panic!(
+                "Tried to explain equivalence between non-equal terms {:?} and {:?}",
+                left_expr, right_pattern
+            );
+        }
+        if let Some(explain) = &mut self.explain {
+            explain
+                .with_nodes(&self.nodes)
+                .explain_equivalence_dijkstra(left, right, (&self.unionfind).into())
+        } else {
+            panic!(
+                "Use runner.with_explanations_enabled() or egraph.with_explanations_enabled() before running to get explanations."
+            );
+        }
+    }
+
     fn explain_id_equivalence_dijkstra(&mut self, left: Id, right: Id) -> Explanation<L> {
         if self.find(left) != self.find(right) {
             panic!(
@@ -48,7 +75,7 @@ impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
         if let Some(explain) = &mut self.explain {
             explain
                 .with_nodes(&self.nodes)
-                .explain_equivalence_dijkstra::<N>(left, right, (&self.unionfind).into())
+                .explain_equivalence_dijkstra(left, right, (&self.unionfind).into())
         } else {
             panic!(
                 "Use runner.with_explanations_enabled() or egraph.with_explanations_enabled() before running to get explanations."
@@ -163,7 +190,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         }
 
         let term = match connection.justification {
-            Justification::Rule(name) => {
+            Rule(name) => {
                 let mut rewritten = (*self
                     .node_to_explanation_dijkstra(connection.next, node_explanation_cache))
                 .clone();
@@ -178,7 +205,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
 
                 Rc::new(rewritten)
             }
-            Justification::Congruence => {
+            Congruence => {
                 // add the children proofs to the last explanation
                 let current_node = self.node(connection.current);
                 let next_node = self.node(connection.next);
@@ -207,7 +234,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         term
     }
 
-    fn explain_equivalence_dijkstra<N: Analysis<L>>(
+    fn explain_equivalence_dijkstra(
         &mut self,
         left: Id,
         right: Id,
@@ -253,14 +280,6 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         dijkstra_state: &mut DijkstraState<L>,
         depth: usize,
     ) -> Option<usize> {
-
-        println!(
-            "{depth}Doing dijkstra from {} ({start}) to {} ({end})",
-            self.id_to_expr(start),
-            self.id_to_expr(end),
-            depth = "  ".repeat(depth)
-        );
-
         if start == end {
             return Some(0);
         } else if let Some(distance) = dijkstra_state.get_distance(start, end) {
@@ -282,12 +301,6 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
             reached_by_congruence,
         }) = prio_queue.pop()
         {
-            println!(
-                "{depth}Exploring {} ({node}) (by cong: {reached_by_congruence})",
-                self.id_to_expr(node),
-                depth = "  ".repeat(depth)
-            );
-
             // If we explore the end, we're done.
             if node == end {
                 break;
@@ -302,18 +315,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
                 .neighbors
                 .clone()
                 .into_iter()
-                .filter(|e| {
-                    let is_congruence = e.justification == Congruence;
-                    if is_congruence {
-                        println!(
-                            "{depth}Filtered out congruence edge from {} to {}",
-                            self.id_to_expr(e.current),
-                            self.id_to_expr(e.next),
-                            depth = "  ".repeat(depth)
-                        );
-                    }
-                    !is_congruence
-                }) // We filter out congruence edges here. They'll be generated later.
+                .filter(|e| e.justification != Congruence) // We filter out congruence edges here. They'll be generated later.
                 .collect::<HashSet<_>>();
             if !reached_by_congruence {
                 // If this node was not reached by a congruence edge then generate outgoing
@@ -322,12 +324,6 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
                 let congruent_nodes =
                     dijkstra_state.get_congruent_neighbors(node, || self.find_all_enodes(node));
                 for congruent_node in congruent_nodes {
-                    println!(
-                        "{depth}Generating congruence edge from {} to {}",
-                        self.id_to_expr(node),
-                        self.id_to_expr(congruent_node),
-                        depth = "  ".repeat(depth)
-                    );
                     let connection = Connection {
                         current: node,
                         next: congruent_node,
@@ -339,14 +335,6 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
             }
 
             'edge_loop: for edge in edges {
-                println!(
-                    "{depth}Relaxing edge from {} to {} ({:?})",
-                    self.id_to_expr(edge.current),
-                    self.id_to_expr(edge.next),
-                    edge.justification,
-                    depth = "  ".repeat(depth)
-                );
-
                 let target = edge.next;
                 let justification = edge.justification.clone();
 
@@ -354,22 +342,10 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
                     Rule(_) => distance + 1,
                     Congruence => {
                         if dijkstra_state.is_blackholed(node, target) {
-                            println!(
-                                "{depth}Skipping blackholed edge from {} to {}",
-                                self.id_to_expr(node),
-                                self.id_to_expr(target),
-                                depth = "  ".repeat(depth)
-                            );
                             continue; // Don't explore blackholed edges.
                         }
 
                         dijkstra_state.blackhole_congruent_edge(node, target);
-                        println!(
-                            "{depth}Blackholed edge from {} to {}",
-                            self.id_to_expr(node),
-                            self.id_to_expr(target),
-                            depth = "  ".repeat(depth)
-                        );
 
                         let mut distance = 0;
 
@@ -417,7 +393,6 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
     }
 }
 
-#[derive(Eq, PartialEq, Ord)]
 struct QueueEntry {
     node: Id,
     distance: usize,
@@ -425,17 +400,29 @@ struct QueueEntry {
 }
 
 impl QueueEntry {
-    fn comparable(&self) -> (usize, bool) {
-        (self.distance, !self.reached_by_congruence)
+    fn comparable(&self) -> (usize, bool, Id) {
+        (self.distance, !self.reached_by_congruence, self.node)
+    }
+}
+
+impl PartialEq<Self> for QueueEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.comparable() == other.comparable()
+    }
+}
+
+impl Eq for QueueEntry {}
+
+impl Ord for QueueEntry {
+    /// Reverse order, so that the smallest distance is at the top of the queue.
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.comparable().cmp(&other.comparable()).reverse()
     }
 }
 
 impl PartialOrd for QueueEntry {
-    /// Reverse order, so that the smallest distance is at the top of the queue.
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
-        self.comparable()
-            .partial_cmp(&other.comparable())
-            .map(core::cmp::Ordering::reverse)
+        Some(self.cmp(other))
     }
 }
 
@@ -473,10 +460,10 @@ impl<'a, L: Language + Display> DijkstraState<'a, L> {
     /// Returns whether the value was updated.
     fn insert_distance(&mut self, from: Id, to: Id, distance_entry: DistanceEntry) -> bool {
         let current_distance = self.get_distance(from, to);
-        if let Some(current_distance) = current_distance {
-            if distance_entry.distance < current_distance {
-                return false;
-            }
+        if let Some(current_distance) = current_distance
+            && distance_entry.distance < current_distance
+        {
+            return false;
         }
         self.distances.insert((from, to), distance_entry);
         true
@@ -500,39 +487,10 @@ impl<'a, L: Language + Display> DijkstraState<'a, L> {
         Some(edges)
     }
 
-    /// Pick a representative term for a given Id.
-    ///
-    /// Calling this function on an uncanonical `Id` returns a representative based on the how it
-    /// was obtained (see [`add_uncanoncial`](EGraph::add_uncanonical),
-    /// [`add_expr_uncanonical`](EGraph::add_expr_uncanonical))
-    fn id_to_expr(&self, id: Id) -> RecExpr<L> {
-        let mut res = Default::default();
-        let mut cache = Default::default();
-        self.id_to_expr_internal(&mut res, id, &mut cache);
-        res
-    }
-
-    fn id_to_expr_internal(
-        &self,
-        res: &mut RecExpr<L>,
-        node_id: Id,
-        cache: &mut HashMap<Id, Id>,
-    ) -> Id {
-        if let Some(existing) = cache.get(&node_id) {
-            return *existing;
-        }
-        let new_node = self.nodes[usize::from(node_id)]
-            .clone()
-            .map_children(|child| self.id_to_expr_internal(res, child, cache));
-        let res_id = res.add(new_node);
-        cache.insert(node_id, res_id);
-        res_id
-    }
-
     /// Get all different nodes in the same congruence class
     ///
     /// * `get_eclass_nodes` is called when there is no cached entry for this
-    ///                      enode, and should return all nodes in the same eclass as `enode`.
+    ///   enode, and should return all nodes in the same eclass as `enode`.
     fn get_congruent_neighbors<F: FnOnce() -> HashSet<Id>>(
         &mut self,
         enode: Id,
@@ -540,17 +498,6 @@ impl<'a, L: Language + Display> DijkstraState<'a, L> {
     ) -> impl Iterator<Item = Id> {
         let node = self.nodes[usize::from(enode)].clone();
         let cannon = self.unionfind.to_congruence_cannon(node);
-        // println!(
-        //     "Searching cong for cannon ({} {}) of {}",
-        //     cannon,
-        //     cannon
-        //         .children()
-        //         .iter()
-        //         .map(|child| self.id_to_expr(*child).to_string())
-        //         .collect::<Vec<_>>()
-        //         .join(" "),
-        //     self.id_to_expr(enode),
-        // );
 
         if !self.congruence_map.contains_key(&cannon) {
             let eclass_nodes = get_eclass_nodes();
@@ -558,17 +505,6 @@ impl<'a, L: Language + Display> DijkstraState<'a, L> {
                 let cannon = self
                     .unionfind
                     .to_congruence_cannon(self.nodes[usize::from(node)].clone());
-                println!(
-                    "Adding {} as congruent of ({} {})",
-                    self.id_to_expr(node),
-                    cannon,
-                    cannon
-                        .children()
-                        .iter()
-                        .map(|child| self.id_to_expr(*child).to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                );
                 self.congruence_map.entry(cannon).or_default().push(node);
             }
         }
