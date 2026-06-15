@@ -1,4 +1,7 @@
 #![allow(clippy::only_used_in_recursion)]
+
+mod dijkstra;
+
 use crate::Symbol;
 use crate::no_std_prelude::*;
 use crate::{

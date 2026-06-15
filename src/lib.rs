@@ -33,6 +33,7 @@ for less or more logging.
 #![doc = "\n```"]
 
 extern crate alloc;
+extern crate core;
 
 /// Crate-internal prelude that re-exports `alloc` / `core` items normally
 /// provided by `std`.  Every module imports `use crate::no_std_prelude::*;`

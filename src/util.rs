@@ -46,20 +46,20 @@ pub use symbol_table::GlobalSymbol as Symbol;
 
 // --- Hashing ---
 
-pub(crate) type BuildHasher = rustc_hash::FxBuildHasher;
+pub type BuildHasher = rustc_hash::FxBuildHasher;
 
-pub(crate) use hashmap::*;
+pub use hashmap::*;
 
 #[cfg(feature = "deterministic")]
 mod hashmap {
-    pub(crate) type HashMap<K, V> = super::IndexMap<K, V>;
-    pub(crate) type HashSet<K> = super::IndexSet<K>;
+    pub type HashMap<K, V> = super::IndexMap<K, V>;
+    pub type HashSet<K> = super::IndexSet<K>;
 }
 #[cfg(not(feature = "deterministic"))]
 mod hashmap {
     use super::BuildHasher;
-    pub(crate) type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasher>;
-    pub(crate) type HashSet<K> = hashbrown::HashSet<K, BuildHasher>;
+    pub type HashMap<K, V> = hashbrown::HashMap<K, V, BuildHasher>;
+    pub type HashSet<K> = hashbrown::HashSet<K, BuildHasher>;
 }
 
 pub(crate) fn hashmap_with_capacity<K, V>(cap: usize) -> hashmap::HashMap<K, V> {
