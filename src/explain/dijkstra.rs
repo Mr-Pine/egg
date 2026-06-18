@@ -144,7 +144,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         let mut proof = vec![self.node_to_explanation_dijkstra(left, node_explanation_cache)];
         let path = dijkstra_state
             .reconstruct_path(left, right)
-            .expect("Path not found");
+            .expect(format!("Path not found from {} to {}", self.id_to_expr(left), self.id_to_expr(right)).as_str());
 
         for edge in path {
             proof.push(self.explain_adjacent_dijkstra(
@@ -461,7 +461,7 @@ impl<'a, L: Language + Display> DijkstraState<'a, L> {
     fn insert_distance(&mut self, from: Id, to: Id, distance_entry: DistanceEntry) -> bool {
         let current_distance = self.get_distance(from, to);
         if let Some(current_distance) = current_distance
-            && distance_entry.distance < current_distance
+            && distance_entry.distance >= current_distance
         {
             return false;
         }
@@ -469,10 +469,42 @@ impl<'a, L: Language + Display> DijkstraState<'a, L> {
         true
     }
 
+    #[allow(dead_code)]
+    fn id_to_expr(&self, id: Id) -> RecExpr<L> {
+        let mut res = Default::default();
+        let mut cache = Default::default();
+        self.id_to_expr_internal(&mut res, id, &mut cache);
+        res
+    }
+
+    fn id_to_expr_internal(
+        &self,
+        res: &mut RecExpr<L>,
+        node_id: Id,
+        cache: &mut HashMap<Id, Id>,
+    ) -> Id {
+        if let Some(existing) = cache.get(&node_id) {
+            return *existing;
+        }
+        let new_node = self
+            .nodes[usize::from(node_id)]
+            .clone()
+            .map_children(|child| self.id_to_expr_internal(res, child, cache));
+        let res_id = res.add(new_node);
+        cache.insert(node_id, res_id);
+        res_id
+    }
+
     fn reconstruct_path(&self, from: Id, to: Id) -> Option<Vec<Connection>> {
+        if from == to {
+            return Some(vec![]);
+        }
+
         let mut current = to;
         let mut edges = vec![];
+        let total_distance = self.get_distance(from, to)?;
         while current != from {
+            debug_assert!(edges.len() <= total_distance, "Path is longer than expected: {} -> {} ({} instead of {})", self.id_to_expr(from), self.id_to_expr(current), edges.len(), total_distance);
             let last_edge = self
                 .distances
                 .get(&(from, current))
