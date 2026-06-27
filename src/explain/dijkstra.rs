@@ -8,6 +8,7 @@ use crate::{
 };
 use alloc::rc::Rc;
 use core::fmt::Display;
+use std::cmp::min;
 use std::collections::BinaryHeap;
 
 impl<L, N, IterData> Runner<L, N, IterData>
@@ -26,7 +27,7 @@ where
 }
 
 impl<L: Language + Display, N: Analysis<L>> EGraph<L, N> {
-    fn explain_equivalence_dijkstra(
+    pub fn explain_equivalence_dijkstra(
         &mut self,
         left_expr: &RecExpr<L>,
         right_expr: &RecExpr<L>,
@@ -193,7 +194,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
             Rule(name) => {
                 let mut rewritten = (*self
                     .node_to_explanation_dijkstra(connection.next, node_explanation_cache))
-                .clone();
+                    .clone();
                 if connection.is_rewrite_forward {
                     rewritten.forward_rule = Some(name);
                 } else {
@@ -241,7 +242,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         unionfind: EClassUnionFind,
     ) -> Explanation<L> {
         let mut dijkstra_state = DijkstraState::new(unionfind, self.nodes);
-        let distance = self.recursive_dijkstra(left, right, &mut dijkstra_state, 0);
+        let distance = self.recursive_dijkstra(left, right, &mut dijkstra_state, None, 0);
         debug_assert!(
             distance.is_some(),
             "Dijkstra's algorithm failed to find a path between {} and {}",
@@ -278,6 +279,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         start: Id,
         end: Id,
         dijkstra_state: &mut DijkstraState<L>,
+        distance_limit: Option<usize>,
         depth: usize,
     ) -> Option<usize> {
         if start == end {
@@ -285,6 +287,8 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         } else if let Some(distance) = dijkstra_state.get_distance(start, end) {
             return Some(distance);
         }
+
+        println!("{}Searching {}-{}: {} to {}", "  ".repeat(depth), start, end, self.id_to_expr(start), self.id_to_expr(end));
 
         let mut prio_queue = BinaryHeap::<QueueEntry>::new();
         prio_queue.push(QueueEntry {
@@ -296,10 +300,10 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
         let mut explored = HashSet::default();
 
         while let Some(QueueEntry {
-            node,
-            distance,
-            reached_by_congruence,
-        }) = prio_queue.pop()
+                           node,
+                           distance,
+                           reached_by_congruence,
+                       }) = prio_queue.pop()
         {
             // If we explore the end, we're done.
             if node == end {
@@ -309,6 +313,13 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
             // Only explore nodes we haven't explored yet.
             if !explored.insert(node) {
                 continue;
+            }
+
+            println!("{}Exploring {}-{}: {} to {}", "  ".repeat(depth), node, end, self.id_to_expr(node), self.id_to_expr(end));
+
+            if let Some(distance_limit_usz) = distance_limit && distance >= distance_limit_usz {
+                println!("Pruned for distance limit");
+                break;
             }
 
             let mut edges = self.explainfind[usize::from(node)]
@@ -338,8 +349,8 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
                 let target = edge.next;
                 let justification = edge.justification.clone();
 
-                let distance = match &justification {
-                    Rule(_) => distance + 1,
+                let edge_length = match &justification {
+                    Rule(_) => 1,
                     Congruence => {
                         if dijkstra_state.is_blackholed(node, target) {
                             continue; // Don't explore blackholed edges.
@@ -347,7 +358,7 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
 
                         dijkstra_state.blackhole_congruent_edge(node, target);
 
-                        let mut distance = 0;
+                        let mut congruence_distance = 0;
 
                         let child_pairs = self
                             .node(node)
@@ -357,25 +368,39 @@ impl<'x, L: Language + Display> ExplainNodes<'x, L> {
                             .zip(self.node(target).children().iter().copied())
                             .collect::<Vec<_>>();
                         for (child_start, child_target) in child_pairs {
+                            let new_distance_limit = {
+                                let decremented_distance_limit = distance_limit.map(|l| l - distance - congruence_distance);
+                                let existing_distance = dijkstra_state.get_distance(node, target);
+                                decremented_distance_limit.and_then(|l| existing_distance.map(|m| min(l, m))).or(decremented_distance_limit).or(existing_distance)
+                            };
+
                             let Some(child_distance) = self.recursive_dijkstra(
                                 child_start,
                                 child_target,
                                 dijkstra_state,
+                                new_distance_limit,
                                 depth + 1,
                             ) else {
                                 dijkstra_state.whitehole_congruent_edge(node, target);
                                 continue 'edge_loop;
                             };
-                            distance += child_distance;
+                            congruence_distance += child_distance;
                         }
 
                         dijkstra_state.whitehole_congruent_edge(node, target);
-                        distance
+                        congruence_distance
                     }
                 };
 
+                //dijkstra_state.insert_distance(node, target, )
+                let edge_distance_entry = DistanceEntry {
+                    distance: edge_length,
+                    last_edge: edge.clone(),
+                };
+                dijkstra_state.insert_distance(node, target, edge_distance_entry);
+
                 let distance_entry = DistanceEntry {
-                    distance,
+                    distance: distance + edge_length,
                     last_edge: edge,
                 };
 
@@ -527,7 +552,7 @@ impl<'a, L: Language + Display> DijkstraState<'a, L> {
         &mut self,
         enode: Id,
         get_eclass_nodes: F,
-    ) -> impl Iterator<Item = Id> {
+    ) -> impl Iterator<Item=Id> {
         let node = self.nodes[usize::from(enode)].clone();
         let cannon = self.unionfind.to_congruence_cannon(node);
 
