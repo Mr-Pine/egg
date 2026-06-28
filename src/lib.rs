@@ -43,7 +43,6 @@ pub(crate) mod no_std_prelude {
         boxed::Box,
         collections::{BinaryHeap, VecDeque},
         format,
-        rc::Rc,
         string::{String, ToString},
         sync::Arc,
         vec,

@@ -83,6 +83,8 @@ struct DistanceMemo {
     tree_depth: HashMap<Id, ProofCost>,
 }
 
+type RcTreeTerm<L> = Arc<TreeTerm<L>>;
+
 /// Explanation trees are the compact representation showing
 /// how one term can be rewritten to another.
 ///
@@ -93,7 +95,7 @@ struct DistanceMemo {
 ///
 /// See [`TreeTerm`] for more details on how to
 /// interpret each term.
-pub type TreeExplanation<L> = Vec<Rc<TreeTerm<L>>>;
+pub type TreeExplanation<L> = Vec<RcTreeTerm<L>>;
 
 /// FlatExplanation are the simpler, expanded representation
 /// showing one term being rewritten to another.
@@ -108,8 +110,8 @@ pub type FlatExplanation<L> = Vec<FlatTerm<L>>;
 pub type UnionEqualities = Vec<(Id, Id, Symbol)>;
 
 // given two adjacent nodes and the direction of the proof
-type ExplainCache<L> = HashMap<(Id, Id), Rc<TreeTerm<L>>>;
-type NodeExplanationCache<L> = HashMap<Id, Rc<TreeTerm<L>>>;
+type ExplainCache<L> = HashMap<(Id, Id), RcTreeTerm<L>>;
+type NodeExplanationCache<L> = HashMap<Id, RcTreeTerm<L>>;
 
 /** A data structure representing an explanation that two terms are equivalent.
 
@@ -258,7 +260,7 @@ impl<L: Language + Display + FromOp> Explanation<L> {
         &self,
         seen: &mut HashSet<*const TreeTerm<L>>,
         seen_adjacent: &mut HashSet<(Id, Id)>,
-        current: &Rc<TreeTerm<L>>,
+        current: &RcTreeTerm<L>,
     ) -> ProofCost {
         if !seen.insert(&**current as *const TreeTerm<L>) {
             return BigUint::zero();
@@ -328,9 +330,9 @@ impl<L: Language + Display + FromOp> Explanation<L> {
     // multiple places, add it to to_let_bind
     fn find_to_let_bind(
         &self,
-        term: Rc<TreeTerm<L>>,
+        term: RcTreeTerm<L>,
         shared: &mut HashSet<*const TreeTerm<L>>,
-        to_let_bind: &mut Vec<Rc<TreeTerm<L>>>,
+        to_let_bind: &mut Vec<RcTreeTerm<L>>,
     ) {
         if !term.child_proofs.is_empty() {
             if shared.insert(&*term as *const TreeTerm<L>) {
@@ -483,7 +485,7 @@ impl<L: Language> TreeTerm<L> {
         }
     }
 
-    fn flatten_proof(proof: &[Rc<TreeTerm<L>>]) -> FlatExplanation<L> {
+    fn flatten_proof(proof: &[RcTreeTerm<L>]) -> FlatExplanation<L> {
         let mut flat_proof: FlatExplanation<L> = vec![];
         for tree in proof {
             let mut explanation = tree.flatten_explanation();
@@ -1049,7 +1051,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
         &self,
         node_id: Id,
         cache: &mut NodeExplanationCache<L>,
-    ) -> Rc<TreeTerm<L>> {
+    ) -> RcTreeTerm<L> {
         if let Some(existing) = cache.get(&node_id) {
             existing.clone()
         } else {
@@ -1058,7 +1060,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
                 sofar.push(vec![self.node_to_explanation(child, cache)]);
                 sofar
             });
-            let res = Rc::new(TreeTerm::new(node, children));
+            let res = RcTreeTerm::new(TreeTerm::new(node, children));
             cache.insert(node_id, res.clone());
             res
         }
@@ -1241,7 +1243,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
         cache: &mut ExplainCache<L>,
         node_explanation_cache: &mut NodeExplanationCache<L>,
         use_unoptimized: bool,
-    ) -> Rc<TreeTerm<L>> {
+    ) -> RcTreeTerm<L> {
         let fingerprint = (connection.current, connection.next);
 
         if let Some(answer) = cache.get(&fingerprint) {
@@ -1261,7 +1263,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
                 rewritten.current = connection.next;
                 rewritten.last = connection.current;
 
-                Rc::new(rewritten)
+                RcTreeTerm::new(rewritten)
             }
             Justification::Congruence => {
                 // add the children proofs to the last explanation
@@ -1283,7 +1285,7 @@ impl<'x, L: Language> ExplainNodes<'x, L> {
                         use_unoptimized,
                     ));
                 }
-                Rc::new(TreeTerm::new(current_node.clone(), subproofs))
+                RcTreeTerm::new(TreeTerm::new(current_node.clone(), subproofs))
             }
         };
 
