@@ -119,6 +119,7 @@ There are two representations of explanations, each of which can be
 represented as s-expressions in strings.
 See [`Explanation`] for more details.
 **/
+#[derive(Clone)]
 pub struct Explanation<L: Language> {
     /// The tree representation of the explanation.
     pub explanation_trees: TreeExplanation<L>,

@@ -868,7 +868,7 @@ impl<L: Language, N: Analysis<L>> EGraph<L, N> {
     /// Like [`add_uncanonical`](EGraph::add_uncanonical), when explanations are enabled calling
     /// Calling [`id_to_expr`](EGraph::id_to_expr) on this `Id` return an correspond to the
     /// instantiation of the pattern
-    fn add_instantiation_noncanonical(&mut self, pat: &PatternAst<L>, subst: &Subst) -> Id {
+    pub fn add_instantiation_noncanonical(&mut self, pat: &PatternAst<L>, subst: &Subst) -> Id {
         let mut new_ids = Vec::with_capacity(pat.len());
         let mut new_node_q = Vec::with_capacity(pat.len());
         for node in pat {
